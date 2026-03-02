@@ -191,12 +191,22 @@ export default function LeadDetailPanel({ lead, onClose }: LeadDetailPanelProps)
                                     <ExternalLink className="w-3 h-3 flex-shrink-0 opacity-40" />
                                 </a>
                             )}
-                            {lead.phone && (
-                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                    <Phone className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                                    <span>{String(lead.phone)}</span>
+                            <div className="flex items-center justify-between group">
+                                <div className={`flex items-center gap-2 text-sm ${lead.phone ? 'text-foreground' : 'text-muted-foreground/40'}`}>
+                                    <Phone className={`w-3.5 h-3.5 flex-shrink-0 ${lead.phone ? 'text-blue-400' : 'opacity-40'}`} />
+                                    <span>{lead.phone ? String(lead.phone) : 'No phone number'}</span>
                                 </div>
-                            )}
+                                {lead.phone && (
+                                    <button onClick={() => copyToClipboard(String(lead.phone), 'phone')}
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                        {copiedField === 'phone' ? (
+                                            <CheckCircle2 className="w-3 h-3 text-green-400" />
+                                        ) : (
+                                            <Copy className="w-3 h-3 text-muted-foreground" />
+                                        )}
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
                         <Separator className="bg-white/[0.06]" />

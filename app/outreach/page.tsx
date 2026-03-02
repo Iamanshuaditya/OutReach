@@ -90,14 +90,12 @@ export default function OutreachDashboard() {
     const [activeTab, setActiveTab] = useState<'overview' | 'domains' | 'campaigns'>('overview');
     const [loading, setLoading] = useState(true);
 
-    // Modal states
     const [showAddDomain, setShowAddDomain] = useState(false);
     const [showAddInbox, setShowAddInbox] = useState<string | null>(null); // domain_id
     const [saving, setSaving] = useState(false);
     const [expandedDns, setExpandedDns] = useState<string | null>(null); // domain_id for expanded DNS records
     const [recheckingDns, setRecheckingDns] = useState<string | null>(null);
 
-    // Add Domain form
     const [newDomain, setNewDomain] = useState('');
     const [newProvider, setNewProvider] = useState('google');
     const [smtpHost, setSmtpHost] = useState('');
@@ -105,14 +103,12 @@ export default function OutreachDashboard() {
     const [smtpUser, setSmtpUser] = useState('');
     const [smtpPass, setSmtpPass] = useState('');
 
-    // Add Inbox form
     const [newInboxEmail, setNewInboxEmail] = useState('');
     const [newInboxName, setNewInboxName] = useState('');
     const [newInboxLimit, setNewInboxLimit] = useState('20');
     const [newInboxSmtpUser, setNewInboxSmtpUser] = useState('');
     const [newInboxSmtpPass, setNewInboxSmtpPass] = useState('');
 
-    // Fetch data
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
@@ -147,8 +143,9 @@ export default function OutreachDashboard() {
                 body: JSON.stringify({
                     domain: newDomain.trim(),
                     provider: newProvider,
-                    ...(newProvider === 'smtp' ? {
-                        smtp_host: smtpHost, smtp_port: parseInt(smtpPort) || 587,
+                    ...(['smtp', 'hostinger', 'godaddy', 'other'].includes(newProvider) && smtpHost ? {
+                        smtp_host: smtpHost || (newProvider === 'hostinger' ? 'smtp.hostinger.com' : ''),
+                        smtp_port: parseInt(smtpPort) || (newProvider === 'hostinger' || newProvider === 'godaddy' ? 465 : 587),
                         smtp_user: smtpUser, smtp_pass: smtpPass,
                     } : {}),
                 }),
@@ -466,11 +463,12 @@ export default function OutreachDashboard() {
                                         {/* Domain Header */}
                                         <div className="px-5 py-4 flex items-center justify-between border-b border-white/[0.04]">
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${domain.provider === 'google' ? 'bg-blue-500/10' : domain.provider === 'microsoft' ? 'bg-cyan-500/10' : 'bg-white/[0.04]'
+                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${domain.provider === 'google' ? 'bg-blue-500/10' : domain.provider === 'microsoft' ? 'bg-cyan-500/10' : domain.provider === 'hostinger' ? 'bg-indigo-500/10' : 'bg-white/[0.04]'
                                                     }`}>
                                                     {domain.provider === 'google' ? <Mail className="w-5 h-5 text-blue-400" /> :
                                                         domain.provider === 'microsoft' ? <Mail className="w-5 h-5 text-cyan-400" /> :
-                                                            <Globe className="w-5 h-5 text-muted-foreground" />}
+                                                            domain.provider === 'hostinger' ? <Mail className="w-5 h-5 text-indigo-400" /> :
+                                                                <Globe className="w-5 h-5 text-muted-foreground" />}
                                                 </div>
                                                 <div>
                                                     <div className="flex items-center gap-2">
@@ -821,6 +819,7 @@ export default function OutreachDashboard() {
                                         { key: 'google', label: 'Google Workspace', sub: 'Gmail / G Suite', color: 'border-blue-500/30 bg-blue-500/5' },
                                         { key: 'microsoft', label: 'Microsoft 365', sub: 'Outlook / Exchange', color: 'border-cyan-500/30 bg-cyan-500/5' },
                                         { key: 'zoho', label: 'Zoho Mail', sub: 'Zoho Workplace', color: 'border-yellow-500/30 bg-yellow-500/5' },
+                                        { key: 'hostinger', label: 'Hostinger Email', sub: 'Hostinger email hosting', color: 'border-indigo-500/30 bg-indigo-500/5' },
                                         { key: 'godaddy', label: 'GoDaddy Email', sub: 'GoDaddy workspace emails', color: 'border-green-500/30 bg-green-500/5' },
                                         { key: 'smtp', label: 'Custom SMTP', sub: 'Any SMTP / IMAP provider', color: 'border-white/10 bg-white/[0.02]' },
                                         { key: 'other', label: 'Other / Not Sure', sub: 'Just check DNS for now', color: 'border-purple-500/30 bg-purple-500/5' },
@@ -835,18 +834,24 @@ export default function OutreachDashboard() {
                                 </div>
                             </div>
 
-                            {/* SMTP fields — show for smtp, godaddy, other */}
-                            {['smtp', 'godaddy', 'other'].includes(newProvider) && (
+                            {/* SMTP fields — show for smtp, godaddy, hostinger, other */}
+                            {['smtp', 'godaddy', 'hostinger', 'other'].includes(newProvider) && (
                                 <div className="space-y-3 bg-white/[0.02] border border-white/[0.04] rounded-xl p-4">
                                     <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                                        SMTP Settings {newProvider !== 'smtp' && <span className="normal-case font-normal">(optional — fill in if you want to send emails)</span>}
+                                        SMTP Settings {!['smtp', 'hostinger'].includes(newProvider) && <span className="normal-case font-normal">(optional — fill in if you want to send emails)</span>}
                                     </div>
+                                    {newProvider === 'hostinger' && (
+                                        <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-2.5 text-[11px] text-indigo-400 flex items-start gap-2 mb-1">
+                                            <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                            <div>Hostinger SMTP is pre-filled. Use your Hostinger email address as the username and your email password.</div>
+                                        </div>
+                                    )}
                                     <div className="grid grid-cols-2 gap-2">
-                                        <Input placeholder={newProvider === 'godaddy' ? 'smtpout.secureserver.net' : 'smtp.yourdomain.com'} value={smtpHost} onChange={e => setSmtpHost(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
-                                        <Input placeholder={newProvider === 'godaddy' ? '465' : '587'} value={smtpPort} onChange={e => setSmtpPort(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                        <Input placeholder={newProvider === 'godaddy' ? 'smtpout.secureserver.net' : newProvider === 'hostinger' ? 'smtp.hostinger.com' : 'smtp.yourdomain.com'} value={smtpHost} onChange={e => setSmtpHost(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                        <Input placeholder={newProvider === 'godaddy' ? '465' : newProvider === 'hostinger' ? '465' : '587'} value={smtpPort} onChange={e => setSmtpPort(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
                                     </div>
-                                    <Input placeholder="SMTP Username (usually your email)" value={smtpUser} onChange={e => setSmtpUser(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
-                                    <Input placeholder="SMTP Password / App Password" type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                    <Input placeholder={newProvider === 'hostinger' ? 'your@email.com (Hostinger email)' : 'SMTP Username (usually your email)'} value={smtpUser} onChange={e => setSmtpUser(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                    <Input placeholder={newProvider === 'hostinger' ? 'Email password' : 'SMTP Password / App Password'} type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
                                 </div>
                             )}
 

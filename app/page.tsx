@@ -82,6 +82,7 @@ export default function Dashboard() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [scoreFilter, setScoreFilter] = useState<'all' | 'hot' | 'warm' | 'cold'>('all');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [phoneOnly, setPhoneOnly] = useState(false);
 
   // ⌘K listener
   useEffect(() => {
@@ -174,6 +175,7 @@ export default function Dashboard() {
     setSelectedLead(null);
     setScoreFilter('all');
     setVerifiedOnly(false);
+    setPhoneOnly(false);
   }
 
   function handleCommandAction(action: string, payload?: Record<string, unknown>) {
@@ -234,6 +236,7 @@ export default function Dashboard() {
   const filteredEnrichedLeads = enrichedLeads.filter(lead => {
     if (scoreFilter !== 'all' && lead.lead_score_bucket !== scoreFilter) return false;
     if (verifiedOnly && lead.email_verification_status !== 'verified') return false;
+    if (phoneOnly && !lead.phone) return false;
     return true;
   });
 
@@ -246,7 +249,7 @@ export default function Dashboard() {
   // Stats
   const hotCount = enrichedLeads.filter(l => l.lead_score_bucket === 'hot').length;
   const warmCount = enrichedLeads.filter(l => l.lead_score_bucket === 'warm').length;
-  const verifiedCount = enrichedLeads.filter(l => l.email_verification_status === 'verified').length;
+  const phoneCount = enrichedLeads.filter(l => !!l.phone).length;
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -422,6 +425,18 @@ export default function Dashboard() {
               Verified
             </button>
 
+            <button
+              onClick={() => setPhoneOnly(!phoneOnly)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors border ${phoneOnly
+                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                : 'text-muted-foreground border-white/[0.04] hover:bg-white/[0.04]'
+                }`}
+            >
+              <Phone className="w-3 h-3" />
+              Phone
+              {phoneCount > 0 && <span className={`ml-0.5 ${phoneOnly ? 'text-blue-400' : 'text-muted-foreground'}`}>{phoneCount}</span>}
+            </button>
+
             <Separator orientation="vertical" className="h-5" />
 
             {selectedTableInfo && (
@@ -469,6 +484,13 @@ export default function Dashboard() {
             <Badge variant="secondary" className="text-[10px] gap-1 cursor-pointer h-5 badge-verified"
               onClick={() => setVerifiedOnly(false)}>
               Verified only
+              <X className="w-2.5 h-2.5" />
+            </Badge>
+          )}
+          {phoneOnly && (
+            <Badge variant="secondary" className="text-[10px] gap-1 cursor-pointer h-5 bg-blue-500/10 text-blue-400 border border-blue-500/20"
+              onClick={() => setPhoneOnly(false)}>
+              Has phone
               <X className="w-2.5 h-2.5" />
             </Badge>
           )}
@@ -528,6 +550,7 @@ export default function Dashboard() {
                     </TableHead>
                     <TableHead className="w-[60px] text-center text-[10px]">Score</TableHead>
                     <TableHead className="w-[70px] text-center text-[10px]">Verified</TableHead>
+                    <TableHead className="w-[50px] text-center text-[10px]">Phone</TableHead>
                     {columns.map((col) => (
                       <TableHead key={col} onClick={() => handleSort(col)}
                         className="cursor-pointer hover:text-foreground select-none text-[10px] uppercase tracking-wider whitespace-nowrap">
@@ -563,6 +586,13 @@ export default function Dashboard() {
                       </TableCell>
                       <TableCell className="text-center">
                         <VerificationBadge status={lead.email_verification_status} confidence={lead.email_confidence_score} daysAgo={lead.freshness_days_ago} />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {lead.phone ? (
+                          <Phone className="w-3.5 h-3.5 text-blue-400 mx-auto" />
+                        ) : (
+                          <Phone className="w-3.5 h-3.5 text-zinc-700 mx-auto" />
+                        )}
                       </TableCell>
                       {columns.map((col) => (
                         <TableCell key={col} className="max-w-[260px]">

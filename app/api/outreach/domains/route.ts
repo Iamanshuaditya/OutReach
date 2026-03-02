@@ -11,6 +11,7 @@ function getDnsRecords(domain: string, provider: string, spf: string, dkim: stri
         microsoft: 'include:spf.protection.outlook.com',
         zoho: 'include:zoho.com',
         godaddy: 'include:secureserver.net',
+        hostinger: 'include:_spf.mail.hostinger.com',
         smtp: 'include:_spf.yourprovider.com',
         other: 'include:_spf.yourprovider.com',
     };
@@ -25,7 +26,7 @@ function getDnsRecords(domain: string, provider: string, spf: string, dkim: stri
         instruction: spf === 'valid'
             ? 'SPF record is properly configured.'
             : `Add a TXT record to your DNS with the value below. This authorizes ${provider === 'google' ? 'Google' : provider === 'microsoft' ? 'Microsoft' :
-                provider === 'zoho' ? 'Zoho' : provider === 'godaddy' ? 'GoDaddy' : 'your email provider'
+                provider === 'zoho' ? 'Zoho' : provider === 'godaddy' ? 'GoDaddy' : provider === 'hostinger' ? 'Hostinger' : 'your email provider'
             } to send email on behalf of ${domain}. Go to your DNS manager (GoDaddy, Namecheap, Cloudflare, etc.) and add this TXT record.`,
         priority: spf === 'missing' ? 'critical' : spf === 'warning' ? 'recommended' : 'ok',
     });
@@ -51,6 +52,11 @@ function getDnsRecords(domain: string, provider: string, spf: string, dkim: stri
             selector: 'default',
             instruction: 'If using GoDaddy Workspace Email, DKIM may be auto-configured. If not, go to GoDaddy Email Settings to find the DKIM key, then add it as a TXT record in your DNS.',
             value: `v=DKIM1; k=rsa; p=<generated-key> — Check GoDaddy Email Settings or your email provider's admin panel`,
+        },
+        hostinger: {
+            selector: 'default',
+            instruction: 'Hostinger email typically auto-configures DKIM for domains hosted with them. If not, go to Hostinger hPanel → Emails → DNS Records to find the DKIM key, then add it as a TXT record in your DNS.',
+            value: `v=DKIM1; k=rsa; p=<generated-key> — Check Hostinger hPanel → Emails → DNS Records`,
         },
         smtp: {
             selector: 'default',
@@ -188,7 +194,7 @@ export async function POST(request: NextRequest) {
 
             // Check DKIM (common selectors)
             try {
-                const selectors = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim', 'zmail', 's1', 's2'];
+                const selectors = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim', 'zmail', 's1', 's2', 'hostinger', 'mail', 'hstgr'];
                 let dkimFound = false;
                 for (const sel of selectors) {
                     try {
@@ -207,7 +213,7 @@ export async function POST(request: NextRequest) {
 
         // Compute health and sending permission
         const dnsScore = [spf_status, dkim_status, dmarc_status].filter(s => s === 'valid').length;
-        const managedProviders = ['google', 'microsoft', 'zoho', 'godaddy'];
+        const managedProviders = ['google', 'microsoft', 'zoho', 'godaddy', 'hostinger'];
         health_score = Math.round((dnsScore / 3) * 60) + (dmarc_policy === 'reject' ? 20 : dmarc_policy === 'quarantine' ? 15 : 5) + (managedProviders.includes(provider) ? 15 : 0);
         health_score = Math.min(100, health_score);
 
@@ -220,7 +226,8 @@ export async function POST(request: NextRequest) {
         can_send = !block_reason;
         daily_limit = can_send ? (
             provider === 'google' ? 200 : provider === 'microsoft' ? 150 :
-                provider === 'zoho' ? 150 : provider === 'godaddy' ? 100 : 80
+                provider === 'zoho' ? 150 : provider === 'godaddy' ? 100 :
+                    provider === 'hostinger' ? 100 : 80
         ) : 0;
 
         const result = await pool.query(
@@ -270,7 +277,7 @@ export async function PUT(request: NextRequest) {
             } catch { dmarc_status = 'missing'; }
 
             try {
-                const sels = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim'];
+                const sels = ['google', 'default', 'selector1', 'selector2', 'k1', 'dkim', 'zmail', 's1', 's2', 'hostinger', 'mail', 'hstgr'];
                 let found = false;
                 for (const s of sels) { try { const r = await dns.resolveTxt(`${s}._domainkey.${d.domain}`); if (r.length) { found = true; break; } } catch { } }
                 dkim_status = found ? 'valid' : 'warning';

@@ -21,7 +21,7 @@ async function migrate() {
       CREATE TABLE IF NOT EXISTS outreach_domains (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         domain TEXT NOT NULL,
-        provider TEXT NOT NULL CHECK (provider IN ('google', 'microsoft', 'smtp', 'zoho', 'godaddy', 'other')),
+        provider TEXT NOT NULL CHECK (provider IN ('google', 'microsoft', 'smtp', 'zoho', 'godaddy', 'hostinger', 'other')),
         smtp_host TEXT,
         smtp_port INTEGER DEFAULT 587,
         smtp_user TEXT,
