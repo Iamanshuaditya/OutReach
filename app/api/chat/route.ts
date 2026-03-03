@@ -7,6 +7,9 @@ import {
 } from "@/lib/chat-sql";
 import type { ChatAPIRequest, ChatAPIResponse, ChatQueryResult } from "@/lib/chat-types";
 
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3.5:4b";
+
 export async function POST(request: NextRequest) {
   try {
     const body: ChatAPIRequest = await request.json();
@@ -16,14 +19,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json<ChatAPIResponse>(
         { explanation: "", error: "Query is required" },
         { status: 400 }
-      );
-    }
-
-    const apiKey = process.env.GROK_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json<ChatAPIResponse>(
-        { explanation: "", error: "API key not configured" },
-        { status: 500 }
       );
     }
 
@@ -39,7 +34,7 @@ ${schemaText}
 CRITICAL: Use ONLY the exact column names listed above. Never guess or invent column names.
 Always quote table names with double quotes if they contain special characters.
 
-Respond with JSON: {"sql": "SELECT ...", "explanation": "one sentence"}
+Respond with ONLY a JSON object, no other text: {"sql": "SELECT ...", "explanation": "one sentence"}
 
 Rules:
 - SELECT only. No INSERT/UPDATE/DELETE/DROP.
@@ -47,7 +42,8 @@ Rules:
 - LIMIT 50 by default.
 - For counts: SELECT COUNT(*) AS count.
 - If unrelated: {"sql": null, "explanation": "reason"}
-- Keep explanation to 1 sentence, plain English, no SQL.`;
+- Keep explanation to 1 sentence, plain English, no SQL.
+- Do NOT wrap the JSON in markdown code fences.`;
 
     // Keep last 6 messages for context
     const conversationMessages = (history || []).slice(-6).map((msg) => ({
@@ -55,39 +51,36 @@ Rules:
       content: msg.content,
     }));
 
-    const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...conversationMessages,
-            { role: "user", content: query },
-          ],
+    const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...conversationMessages,
+          { role: "user", content: query },
+        ],
+        stream: false,
+        format: "json",
+        options: {
           temperature: 0.3,
-          max_tokens: 2048,
-          response_format: { type: "json_object" },
-        }),
-      }
-    );
+          num_predict: 2048,
+        },
+      }),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Groq API error:", errorText);
+      console.error("Ollama error:", errorText);
       return NextResponse.json<ChatAPIResponse>(
-        { explanation: "", error: "AI service unavailable" },
+        { explanation: "", error: "Local AI model unavailable. Make sure Ollama is running." },
         { status: 502 }
       );
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
+    const content = data.message?.content || "";
 
     // Parse LLM response — multiple fallback strategies
     let parsed: { sql?: string | null; explanation?: string };
@@ -95,8 +88,12 @@ Rules:
       parsed = JSON.parse(content);
     } catch {
       try {
-        // Strip markdown fences if present
-        const stripped = content.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        // Strip markdown fences / thinking tags if present
+        const stripped = content
+          .replace(/<think>[\s\S]*?<\/think>/g, "")
+          .replace(/```json?\s*/g, "")
+          .replace(/```/g, "")
+          .trim();
         const jsonMatch = stripped.match(/\{[\s\S]*\}/);
         parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { sql: null, explanation: stripped };
       } catch {
@@ -110,6 +107,7 @@ Rules:
     // Clean explanation — never show SQL or JSON artifacts to the user
     let explanation = parsed.explanation || "Here are the results.";
     explanation = explanation
+      .replace(/<think>[\s\S]*?<\/think>/g, "")
       .replace(/```[\s\S]*?```/g, "")
       .replace(/\{[\s\S]*\}/g, "")
       .replace(/SELECT\s[\s\S]*/i, "")

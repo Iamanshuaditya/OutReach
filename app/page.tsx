@@ -315,7 +315,7 @@ export default function Dashboard() {
           </div>
 
           {/* Table List */}
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             <div className="px-2 pb-2">
               <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-widest px-2 py-1.5 mb-1 flex items-center gap-1.5">
                 <LayoutGrid className="w-3 h-3" />
