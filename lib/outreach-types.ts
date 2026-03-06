@@ -138,6 +138,7 @@ export interface CampaignStats {
     total_sent: number;
     total_delivered: number;
     total_opened: number;
+    total_clicked?: number;
     total_replied: number;
     total_bounced: number;
     total_unsubscribed: number;

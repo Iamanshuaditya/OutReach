@@ -1,17 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
+import { env } from "@/lib/env";
+import { requireOrgContext } from "@/lib/auth/multi-tenant";
+import {
+  checkRateLimit,
+  RATE_LIMITS,
+  rateLimitHeaders,
+} from "@/lib/rate-limit";
+import {
+  aiEmailGenerationSchema,
+  formatZodError,
+} from "@/lib/validation";
 
 export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { lead, sender, tone, step_number, previous_emails } = body;
+  const auth = await requireOrgContext(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
 
-        if (!lead || !sender) {
-            return NextResponse.json({ error: "Lead and sender data required" }, { status: 400 });
-        }
+  const aiRate = checkRateLimit(
+    `ai:${auth.context.userId}`,
+    RATE_LIMITS.aiGeneration
+  );
 
-        const apiKey = process.env.GROK_API_KEY;
+  if (!aiRate.allowed) {
+    return NextResponse.json(
+      { error: "AI generation rate limit exceeded" },
+      { status: 429, headers: rateLimitHeaders(aiRate) }
+    );
+  }
 
-        const systemPrompt = `You are an expert cold email writer for B2B outbound sales. You write hyper-personalized, non-spammy emails that feel human.
+  try {
+    const rawBody = await request.json();
+    const parsed = aiEmailGenerationSchema.safeParse(rawBody);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: formatZodError(parsed.error) },
+        { status: 400, headers: rateLimitHeaders(aiRate) }
+      );
+    }
+
+    const { lead, sender, tone, step_number, previous_emails } = parsed.data;
+
+    const systemPrompt = `You are an expert cold email writer for B2B outbound sales. You write hyper-personalized, non-spammy emails that feel human.
 
 RULES:
 - Never use spammy language (free, limited time, act now, etc.)
@@ -23,8 +54,8 @@ RULES:
 - Sound like a real person, not a template
 - If this is a follow-up email (step > 1), reference the previous outreach naturally
 
-Tone: ${tone || 'direct'}
-Step: ${step_number || 1} of sequence
+Tone: ${tone ?? "direct"}
+Step: ${step_number ?? 1} of sequence
 
 Respond ONLY with valid JSON:
 {
@@ -40,90 +71,115 @@ Respond ONLY with valid JSON:
   "rejection_reason": null
 }`;
 
-        const userPrompt = `Write a cold email for:
+    const userPrompt = `Write a cold email for:
 
 RECIPIENT:
-Name: ${lead.name || 'Unknown'}
-Title: ${lead.title || 'Unknown'}
-Company: ${lead.company || 'Unknown'}
-Industry: ${lead.industry || 'Unknown'}
-Location: ${lead.city || 'Unknown'}
-${lead.linkedin_context ? `LinkedIn Context: ${lead.linkedin_context}` : ''}
-${lead.company_context ? `Company Context: ${lead.company_context}` : ''}
+Name: ${lead.name ?? "Unknown"}
+Title: ${lead.title ?? "Unknown"}
+Company: ${lead.company ?? "Unknown"}
+Industry: ${lead.industry ?? "Unknown"}
+Location: ${lead.city ?? "Unknown"}
+${lead.linkedin_context ? `LinkedIn Context: ${lead.linkedin_context}` : ""}
+${lead.company_context ? `Company Context: ${lead.company_context}` : ""}
 
 SENDER:
-Name: ${sender.name || 'Unknown'}
-Company: ${sender.company || 'Unknown'}
-Product: ${sender.product_description || 'Business solution'}
-Value Prop: ${sender.value_proposition || 'Helping businesses grow'}
+Name: ${sender.name ?? "Unknown"}
+Company: ${sender.company ?? "Unknown"}
+Product: ${sender.product_description ?? "Business solution"}
+Value Prop: ${sender.value_proposition ?? "Helping businesses grow"}
 
-${previous_emails?.length ? `PREVIOUS EMAILS IN SEQUENCE:\n${previous_emails.join('\n---\n')}` : ''}
+${
+  previous_emails?.length
+    ? `PREVIOUS EMAILS IN SEQUENCE:\n${previous_emails.join("\n---\n")}`
+    : ""
+}
 
-Write step ${step_number || 1} of the sequence.`;
+Write step ${step_number ?? 1} of the sequence.`;
 
-        if (!apiKey) {
-            // Fallback to template-based generation
-            const firstName = (lead.name || 'there').split(' ')[0];
-            return NextResponse.json({
-                subject: `Quick thought on ${lead.company || 'your team'}`,
-                subject_variants: [
-                    `${firstName} — saw something about ${lead.company || 'your company'}`,
-                    `Idea for ${lead.company || 'your company'} (90 sec read)`,
-                ],
-                body: `Hi ${firstName},\n\nI noticed you're ${lead.title || 'leading the charge'} at ${lead.company || 'your company'}. ${lead.industry ? `In the ${lead.industry} space` : 'In your industry'}, I've been seeing teams struggle with outbound that actually converts.\n\n${sender.company || 'We'} helps ${lead.industry || 'companies'} teams ${sender.value_proposition || 'close deals faster with better data'}.\n\nWould it make sense to chat for 10 min this week?\n\n${sender.name || 'Best'}`,
-                personalized_first_line: `I noticed you're ${lead.title || 'leading the charge'} at ${lead.company || 'your company'}.`,
-                pain_angle: `Outbound conversion rates in ${lead.industry || 'their industry'}`,
-                cta: 'Would it make sense to chat for 10 min this week?',
-                humanization_score: 72,
-                spam_risk_score: 18,
-                is_safe: true,
-                rejection_reason: null,
-            });
-        }
+    if (!env.GROQ_API_KEY) {
+      const firstName = (lead.name ?? "there").split(" ")[0];
 
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt },
-                ],
-                temperature: 0.9,
-                max_tokens: 1200,
-            }),
-        });
-
-        if (!response.ok) {
-            const err = await response.text();
-            console.error("Groq API error:", err);
-            return NextResponse.json({ error: "AI service unavailable" }, { status: 502 });
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || "";
-
-        let parsed;
-        try {
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
-        } catch {
-            return NextResponse.json({ error: "Failed to parse AI response" }, { status: 500 });
-        }
-
-        // Safety check — reject if spam score is too high
-        if (parsed.spam_risk_score > 60) {
-            parsed.is_safe = false;
-            parsed.rejection_reason = `Spam risk score ${parsed.spam_risk_score} exceeds safe threshold (60). Please adjust tone or content.`;
-        }
-
-        return NextResponse.json(parsed);
-    } catch (error) {
-        console.error("Email generation error:", error);
-        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+      return NextResponse.json(
+        {
+          subject: `Quick thought on ${lead.company ?? "your team"}`,
+          subject_variants: [
+            `${firstName} — saw something about ${lead.company ?? "your company"}`,
+            `Idea for ${lead.company ?? "your company"} (90 sec read)`,
+          ],
+          body: `Hi ${firstName},\n\nI noticed you're ${lead.title ?? "leading the charge"} at ${lead.company ?? "your company"}. ${
+            lead.industry
+              ? `In the ${lead.industry} space`
+              : "In your industry"
+          }, I've been seeing teams struggle with outbound that actually converts.\n\n${
+            sender.company ?? "We"
+          } helps ${lead.industry ?? "companies"} teams ${
+            sender.value_proposition ?? "close deals faster with better data"
+          }.\n\nWould it make sense to chat for 10 min this week?\n\n${
+            sender.name ?? "Best"
+          }`,
+          personalized_first_line: `I noticed you're ${lead.title ?? "leading the charge"} at ${lead.company ?? "your company"}.`,
+          pain_angle: `Outbound conversion rates in ${lead.industry ?? "their industry"}`,
+          cta: "Would it make sense to chat for 10 min this week?",
+          humanization_score: 72,
+          spam_risk_score: 18,
+          is_safe: true,
+          rejection_reason: null,
+        },
+        { headers: rateLimitHeaders(aiRate) }
+      );
     }
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.9,
+        max_tokens: 1200,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error("Groq API error:", err);
+      return NextResponse.json(
+        { error: "AI service unavailable" },
+        { status: 502, headers: rateLimitHeaders(aiRate) }
+      );
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content ?? "";
+
+    let generated;
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      generated = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
+    } catch {
+      return NextResponse.json(
+        { error: "Failed to parse AI response" },
+        { status: 500, headers: rateLimitHeaders(aiRate) }
+      );
+    }
+
+    if (generated.spam_risk_score > 60) {
+      generated.is_safe = false;
+      generated.rejection_reason = `Spam risk score ${generated.spam_risk_score} exceeds safe threshold (60). Please adjust tone or content.`;
+    }
+
+    return NextResponse.json(generated, { headers: rateLimitHeaders(aiRate) });
+  } catch (error) {
+    console.error("Email generation error:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500, headers: rateLimitHeaders(aiRate) }
+    );
+  }
 }

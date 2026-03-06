@@ -1,23 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { verifyAuthToken } from "@/lib/auth/token";
 
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth",
+  "/api/track/open",
+  "/api/track/click",
+  "/api/unsubscribe",
+  "/api/cron/process-queue",
+  "/api/cron/check-replies",
+];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(
-    (p) => pathname === p || pathname.startsWith(p + "/")
+    (path) => pathname === path || pathname.startsWith(path + "/")
   );
 }
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
   if (isPublicPath(pathname)) {
     return NextResponse.next();
   }
 
-  // Allow Next.js internals and static files
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
@@ -30,28 +36,24 @@ export async function middleware(request: NextRequest) {
   }
 
   const token = request.cookies.get("auth_token")?.value;
-
   if (!token) {
     return redirectToLogin(request);
   }
 
-  try {
-    const secret = new TextEncoder().encode(process.env.AUTH_SECRET);
-    await jwtVerify(token, secret);
-    return NextResponse.next();
-  } catch {
+  const isValid = await verifyAuthToken(token);
+  if (!isValid) {
     return redirectToLogin(request);
   }
+
+  return NextResponse.next();
 }
 
 function redirectToLogin(request: NextRequest): NextResponse {
-  // For API routes, return 401 instead of redirecting
   if (request.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const loginUrl = new URL("/login", request.url);
-  return NextResponse.redirect(loginUrl);
+  return NextResponse.redirect(new URL("/login", request.url));
 }
 
 export const config = {
