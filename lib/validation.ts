@@ -37,13 +37,13 @@ export const domainCreateSchema = z.object({
     .toLowerCase()
     .regex(domainRegex, "Please provide a valid domain"),
   provider: providerEnum,
-  smtp_host: z.string().trim().min(1).optional(),
-  smtp_port: z.coerce.number().int().min(1).max(65535).optional(),
-  smtp_user: z.string().trim().min(1).optional(),
-  smtp_pass: z.string().min(1).optional(),
-  imap_host: z.string().trim().min(1).optional(),
-  imap_pass: z.string().min(1).optional(),
-  imap_port: z.coerce.number().int().min(1).max(65535).optional(),
+  smtp_host: z.string().trim().min(1).nullish(),
+  smtp_port: z.coerce.number().int().min(1).max(65535).nullish(),
+  smtp_user: z.string().trim().min(1).nullish(),
+  smtp_pass: z.string().min(1).nullish(),
+  imap_host: z.string().trim().min(1).nullish(),
+  imap_pass: z.string().min(1).nullish(),
+  imap_port: z.coerce.number().int().min(1).max(65535).nullish(),
 });
 
 export const domainRecheckSchema = z.object({
@@ -53,9 +53,9 @@ export const domainRecheckSchema = z.object({
 export const inboxCreateSchema = z.object({
   domain_id: z.string().uuid("domain_id must be a valid UUID"),
   email: z.string().trim().toLowerCase().email("Invalid inbox email"),
-  display_name: z.string().trim().max(120).optional(),
-  smtp_user: z.string().trim().min(1).optional(),
-  smtp_pass: z.string().min(1).optional(),
+  display_name: z.string().trim().max(120).nullish(),
+  smtp_user: z.string().trim().min(1).nullish(),
+  smtp_pass: z.string().min(1).nullish(),
   daily_limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
@@ -89,7 +89,7 @@ export const campaignStepSchema = z
     condition: z.enum(["replied", "opened", "no_reply"]).optional().nullable(),
   })
   .superRefine((value, ctx) => {
-    if (value.type === "email") {
+    if (value.type === "email" && !value.ai_personalize) {
       if (!value.subject_template || !value.subject_template.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -127,7 +127,7 @@ export const campaignCreateSchema = z.object({
   name: z.string().trim().max(200).optional(),
   status: campaignStatusEnum.optional(),
   send_mode: z.enum(["safe", "moderate", "aggressive"]).optional(),
-  lead_source: z.string().trim().max(200).optional().nullable(),
+  lead_source: z.string().trim().max(500).optional().nullable(),
   lead_count: z.coerce.number().int().min(0).max(1_000_000).optional(),
   sender_name: z.string().trim().max(120).optional(),
   sender_company: z.string().trim().max(120).optional(),

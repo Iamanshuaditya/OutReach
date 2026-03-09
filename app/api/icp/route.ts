@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import pool from "@/lib/db";
+import { requireOrgContext } from "@/lib/auth/multi-tenant";
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { prompt } = body;
+        const { prompt, save } = body;
 
         if (!prompt || typeof prompt !== 'string') {
             return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
@@ -94,11 +96,65 @@ Generate 3-5 ICP variants based on the user's prompt. Each variant should target
             );
         }
 
+        const playbookName = parsed.playbook_name || "Custom ICP";
+        const explanation = parsed.explanation || "Generated from your description";
+        const variants = parsed.variants || [];
+
+        // If save=true, persist to icp_definitions table
+        let saved_id: string | null = null;
+        if (save) {
+            const auth = await requireOrgContext(request);
+            if (auth.ok) {
+                const slug = playbookName
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, "-")
+                    .replace(/^-|-$/g, "")
+                    .slice(0, 80);
+
+                const filters = variants[0]?.filters || {};
+                const icpFilters = {
+                    titles_include: filters.titles_include || [],
+                    titles_exclude: filters.titles_exclude || [],
+                    industries_include: filters.industries_include || [],
+                    industries_exclude: [],
+                    employee_count_range: filters.company_size_range || null,
+                    revenue_range: null,
+                    funding_stages: [],
+                    countries: filters.geo?.countries || [],
+                    states: filters.geo?.states || [],
+                    cities: filters.geo?.cities || [],
+                    company_keywords: [],
+                    domain_patterns: [],
+                };
+
+                const result = await pool.query(
+                    `INSERT INTO icp_definitions
+                      (org_id, name, slug, description, filters)
+                     VALUES ($1, $2, $3, $4, $5::jsonb)
+                     ON CONFLICT (org_id, slug) DO UPDATE SET
+                       name = EXCLUDED.name,
+                       description = EXCLUDED.description,
+                       filters = EXCLUDED.filters,
+                       updated_at = NOW()
+                     RETURNING id`,
+                    [
+                        auth.context.orgId,
+                        playbookName,
+                        slug,
+                        explanation,
+                        JSON.stringify(icpFilters),
+                    ]
+                );
+                saved_id = result.rows[0]?.id ?? null;
+            }
+        }
+
         return NextResponse.json({
-            playbook_name: parsed.playbook_name || "Custom ICP",
-            explanation: parsed.explanation || "Generated from your description",
-            variants: parsed.variants || [],
+            playbook_name: playbookName,
+            explanation,
+            variants,
             prompt,
+            saved_id,
         });
     } catch (error) {
         console.error("ICP Builder error:", error);

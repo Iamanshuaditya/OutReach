@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "migrate:foundation": "tsx scripts/migrate-mvp-foundation.ts",
-    "migrate:wave2-6": "tsx scripts/migrate-wave2-6.ts"
+    "migrate:wave2-6": "tsx scripts/migrate-wave2-6.ts",
+    "migrate:icp": "tsx scripts/migrate-icp-segmentation.ts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

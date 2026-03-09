@@ -92,9 +92,22 @@ export default function ICPBuilderModal({ open, onClose, onApplyFilters }: ICPBu
         }
     };
 
-    const handleSave = () => {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+    const handleSave = async () => {
+        if (!result) return;
+        setSaved(false);
+        try {
+            const res = await fetch('/api/icp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: result.prompt || prompt, save: true }),
+            });
+            if (!res.ok) throw new Error('Failed to save');
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+        } catch (err) {
+            console.error('Save failed:', err);
+            setError('Failed to save ICP. Please try again.');
+        }
     };
 
     if (!open) return null;

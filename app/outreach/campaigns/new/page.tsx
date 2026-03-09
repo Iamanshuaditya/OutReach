@@ -37,6 +37,14 @@ interface RealDomain {
     inboxes: RealInbox[];
 }
 
+interface ICPSegmentSource {
+    icp_id: string;
+    icp_name: string;
+    tier: string;
+    count: number;
+    avg_score: number;
+}
+
 interface RealInbox {
     id: string;
     domain_id: string;
@@ -62,6 +70,8 @@ export default function CampaignBuilder() {
     // Real data from API
     const [domains, setDomains] = useState<RealDomain[]>([]);
     const [leadSources, setLeadSources] = useState<LeadSource[]>([]);
+    const [icpSegments, setIcpSegments] = useState<ICPSegmentSource[]>([]);
+    const [sourceTab, setSourceTab] = useState<'tables' | 'segments'>('tables');
     const [loadingData, setLoadingData] = useState(true);
 
     const [selectedLeadCount, setSelectedLeadCount] = useState(250);
@@ -100,9 +110,10 @@ export default function CampaignBuilder() {
         async function load() {
             setLoadingData(true);
             try {
-                const [domainsRes, tablesRes] = await Promise.all([
+                const [domainsRes, tablesRes, segStatsRes] = await Promise.all([
                     fetch('/api/outreach/domains'),
                     fetch('/api/tables'),
+                    fetch('/api/icp/segments/stats'),
                 ]);
                 if (domainsRes.ok) {
                     const d = await domainsRes.json();
@@ -113,6 +124,26 @@ export default function CampaignBuilder() {
                     setLeadSources((t.tables || t || []).map((tbl: { table_name: string; row_count: number }) => ({
                         name: tbl.table_name, count: tbl.row_count,
                     })));
+                }
+                if (segStatsRes.ok) {
+                    const s = await segStatsRes.json();
+                    const byIcp = s.by_icp || [];
+                    const segments: ICPSegmentSource[] = [];
+                    for (const icp of byIcp) {
+                        for (const tier of ['tier_1', 'tier_2', 'tier_3'] as const) {
+                            const count = Number(icp[tier] || 0);
+                            if (count > 0) {
+                                segments.push({
+                                    icp_id: icp.icp_id,
+                                    icp_name: icp.icp_name,
+                                    tier,
+                                    count,
+                                    avg_score: Number(icp.avg_composite || 0),
+                                });
+                            }
+                        }
+                    }
+                    setIcpSegments(segments);
                 }
             } catch (e) { console.error(e); }
             setLoadingData(false);
@@ -193,12 +224,14 @@ export default function CampaignBuilder() {
                     steps: sequence.map((s, i) => ({
                         step_number: i + 1,
                         type: s.type,
-                        subject_template: s.subject_template,
-                        body_template: s.body_template,
-                        ai_personalize: s.ai_personalize,
-                        tone: s.tone,
-                        wait_days: s.wait_days,
-                        condition: s.condition,
+                        ...(s.type === 'email' ? {
+                            subject_template: s.subject_template || undefined,
+                            body_template: s.body_template || undefined,
+                            ai_personalize: s.ai_personalize,
+                            tone: s.tone,
+                        } : {}),
+                        ...(s.type === 'wait' ? { wait_days: s.wait_days } : {}),
+                        ...(s.type === 'condition' ? { condition: s.condition } : {}),
                     })),
                     inbox_ids: selectedInboxes,
                     health_check_data: healthCheck,
@@ -280,43 +313,91 @@ export default function CampaignBuilder() {
                     <div className="space-y-6 animate-slide-up">
                         <div>
                             <h2 className="text-xl font-bold mb-1">Select Your Leads</h2>
-                            <p className="text-sm text-muted-foreground">Choose a lead table and how many contacts to include</p>
+                            <p className="text-sm text-muted-foreground">Choose a lead table or ICP segment</p>
                         </div>
 
-                        {leadSources.length === 0 ? (
-                            <div className="text-center py-12 bg-white/[0.01] border border-white/[0.04] rounded-xl">
-                                <Users className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
-                                <p className="text-sm text-muted-foreground">No lead tables found in your database</p>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
-                                    {leadSources.map(source => (
-                                        <button key={source.name} onClick={() => { setSelectedSource(source.name); setSelectedLeadCount(Math.min(500, source.count)); }}
-                                            className={`text-left p-4 rounded-xl border transition-all ${selectedSource === source.name ? 'border-primary/30 bg-primary/[0.03]' : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.1]'
-                                                }`}>
-                                            <div className="flex items-center justify-between mb-1">
-                                                <span className="text-sm font-medium truncate pr-2">{source.name}</span>
-                                                {selectedSource === source.name && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />}
-                                            </div>
-                                            <span className="text-xs text-muted-foreground">{source.count.toLocaleString()} leads</span>
-                                        </button>
-                                    ))}
-                                </div>
+                        {/* Source type tabs */}
+                        <div className="flex gap-2">
+                            <button onClick={() => setSourceTab('tables')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${sourceTab === 'tables' ? 'bg-primary/20 text-primary border border-primary/20' : 'bg-white/[0.03] text-muted-foreground hover:text-foreground border border-white/[0.06]'}`}>
+                                <Users className="w-3.5 h-3.5 inline mr-1.5" />Lead Tables
+                            </button>
+                            <button onClick={() => setSourceTab('segments')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${sourceTab === 'segments' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/20' : 'bg-white/[0.03] text-muted-foreground hover:text-foreground border border-white/[0.06]'}`}>
+                                <Target className="w-3.5 h-3.5 inline mr-1.5" />ICP Segments
+                                {icpSegments.length > 0 && <Badge variant="outline" className="text-[10px] ml-1.5 border-purple-500/20 text-purple-400 bg-purple-500/5">{icpSegments.length}</Badge>}
+                            </button>
+                        </div>
 
-                                {selectedSource && (
-                                    <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
-                                        <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Lead Count</label>
-                                        <div className="flex items-center gap-4">
-                                            <Input type="number" value={selectedLeadCount} onChange={e => setSelectedLeadCount(parseInt(e.target.value) || 0)}
-                                                className="w-32 h-9 text-sm bg-white/[0.02]" min={1} max={10000} />
-                                            <input type="range" value={selectedLeadCount} onChange={e => setSelectedLeadCount(parseInt(e.target.value))}
-                                                min={50} max={Math.min(5000, leadSources.find(s => s.name === selectedSource)?.count || 2000)} step={50} className="flex-1 accent-primary" />
-                                            <span className="text-sm text-muted-foreground tabular-nums">{selectedLeadCount.toLocaleString()}</span>
-                                        </div>
+                        {sourceTab === 'tables' && (
+                            <>
+                                {leadSources.length === 0 ? (
+                                    <div className="text-center py-12 bg-white/[0.01] border border-white/[0.04] rounded-xl">
+                                        <Users className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
+                                        <p className="text-sm text-muted-foreground">No lead tables found in your database</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
+                                        {leadSources.map(source => (
+                                            <button key={source.name} onClick={() => { setSelectedSource(source.name); setSelectedLeadCount(Math.min(500, source.count)); }}
+                                                className={`text-left p-4 rounded-xl border transition-all ${selectedSource === source.name ? 'border-primary/30 bg-primary/[0.03]' : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.1]'}`}>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-sm font-medium truncate pr-2">{source.name}</span>
+                                                    {selectedSource === source.name && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />}
+                                                </div>
+                                                <span className="text-xs text-muted-foreground">{source.count.toLocaleString()} leads</span>
+                                            </button>
+                                        ))}
                                     </div>
                                 )}
                             </>
+                        )}
+
+                        {sourceTab === 'segments' && (
+                            <>
+                                {icpSegments.length === 0 ? (
+                                    <div className="text-center py-12 bg-white/[0.01] border border-white/[0.04] rounded-xl">
+                                        <Target className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
+                                        <p className="text-sm text-muted-foreground">No ICP segments available</p>
+                                        <p className="text-xs text-muted-foreground/60 mt-1">Run segmentation from the <a href="/icp" className="text-purple-400 hover:underline">ICP dashboard</a> first</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
+                                        {icpSegments.map(seg => {
+                                            const segSource = `segment::${seg.icp_id}::${seg.tier}`;
+                                            const tierLabel = seg.tier === 'tier_1' ? 'Tier 1' : seg.tier === 'tier_2' ? 'Tier 2' : 'Tier 3';
+                                            const tierColor = seg.tier === 'tier_1' ? 'text-green-400 bg-green-500/10 border-green-500/20' : seg.tier === 'tier_2' ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' : 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+                                            return (
+                                                <button key={segSource} onClick={() => { setSelectedSource(segSource); setSelectedLeadCount(Math.min(500, seg.count)); }}
+                                                    className={`text-left p-4 rounded-xl border transition-all ${selectedSource === segSource ? 'border-purple-500/30 bg-purple-500/[0.03]' : 'border-white/[0.06] bg-white/[0.01] hover:border-white/[0.1]'}`}>
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <span className="text-sm font-medium truncate pr-2">{seg.icp_name}</span>
+                                                        {selectedSource === segSource && <CheckCircle2 className="w-4 h-4 text-purple-400 flex-shrink-0" />}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="outline" className={`text-[10px] ${tierColor}`}>{tierLabel}</Badge>
+                                                        <span className="text-xs text-muted-foreground">{seg.count.toLocaleString()} leads</span>
+                                                        <span className="text-[10px] text-muted-foreground/60 ml-auto">avg {Math.round(seg.avg_score)}</span>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {selectedSource && (
+                            <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
+                                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Lead Count</label>
+                                <div className="flex items-center gap-4">
+                                    <Input type="number" value={selectedLeadCount} onChange={e => setSelectedLeadCount(parseInt(e.target.value) || 0)}
+                                        className="w-32 h-9 text-sm bg-white/[0.02]" min={1} max={10000} />
+                                    <input type="range" value={selectedLeadCount} onChange={e => setSelectedLeadCount(parseInt(e.target.value))}
+                                        min={50} max={5000} step={50} className="flex-1 accent-primary" />
+                                    <span className="text-sm text-muted-foreground tabular-nums">{selectedLeadCount.toLocaleString()}</span>
+                                </div>
+                            </div>
                         )}
                     </div>
                 )}

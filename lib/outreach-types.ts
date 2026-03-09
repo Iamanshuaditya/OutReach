@@ -69,7 +69,7 @@ export interface Campaign {
 
     // Target
     lead_count: number;
-    lead_source: string; // table name or list name
+    lead_source: string; // table name, or "segment::{icp_id}::{tier}", or "segment::{icp_id}::sub::{sub_segment_id}"
 
     // Sequence
     steps: CampaignStep[];

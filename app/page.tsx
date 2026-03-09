@@ -17,7 +17,7 @@ import {
   LayoutGrid, Flame, ThermometerSun, Snowflake, ShieldCheck,
   Clock, Command, Sparkles, CheckCircle2, AlertTriangle,
   XCircle, TrendingUp, Download, FileText, Filter,
-  CheckSquare, Square, Zap, BarChart3, Package,
+  CheckSquare, Square, Zap, BarChart3, Package, Target,
 } from "lucide-react";
 import CommandPalette from "@/components/CommandPalette";
 import LeadDetailPanel from "@/components/LeadDetailPanel";
@@ -369,6 +369,13 @@ export default function Dashboard() {
               <Mail className="w-3.5 h-3.5 text-primary" />
               <span>Outreach</span>
               <Badge variant="outline" className="text-[8px] ml-auto border-primary/20 text-primary bg-primary/5">New</Badge>
+            </a>
+            <a href="/icp"
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-white/[0.05] transition-colors"
+            >
+              <Target className="w-3.5 h-3.5 text-purple-400" />
+              <span>ICP Segments</span>
+              <Badge variant="outline" className="text-[8px] ml-auto border-purple-500/20 text-purple-400 bg-purple-500/5">New</Badge>
             </a>
           </div>
         </div>

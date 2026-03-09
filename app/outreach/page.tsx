@@ -712,7 +712,7 @@ export default function OutreachDashboard() {
                                             const emailSteps = (camp.steps || []).filter(s => s.type === 'email').length;
 
                                             return (
-                                                <div key={camp.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-5 hover:border-white/[0.1] transition-colors">
+                                                <div key={camp.id} className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-5 hover:border-white/[0.1] transition-colors cursor-pointer" onClick={() => window.location.href = `/outreach/campaigns/${camp.id}`}>
                                                     <div className="flex items-center justify-between mb-3">
                                                         <div className="flex items-center gap-3">
                                                             <div className={`w-3 h-3 rounded-full ${camp.status === 'active' ? 'bg-green-400 animate-pulse' :

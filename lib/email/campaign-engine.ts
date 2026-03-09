@@ -34,6 +34,9 @@ function substituteTemplate(template: string, lead: CampaignLead): string {
     if (key === "last_name") return lead.lastName;
     if (key === "company") return lead.company;
     if (key === "email") return lead.email;
+    // Extended fields from segment lead_data
+    if (key === "title" && lead.raw.title) return String(lead.raw.title);
+    if (key === "industry" && lead.raw.industry) return String(lead.raw.industry);
     return "";
   });
 }
@@ -47,14 +50,13 @@ function getEmailStepsWithOffsets(
   const result: Array<{ step: CampaignStepRow; offsetDays: number }> = [];
 
   for (const step of sorted) {
-    if (step.type === "condition") {
-      throw new Error(
-        "MVP campaign activation supports only linear email + wait steps"
-      );
-    }
-
     if (step.type === "wait") {
       offsetDays += Math.max(0, step.wait_days ?? 0);
+      continue;
+    }
+
+    if (step.type === "condition") {
+      // Condition steps act as a gate — skip for now (MVP: treat as pass-through)
       continue;
     }
 
@@ -262,6 +264,19 @@ export async function activateCampaign(
       [campaignId, orgId]
     );
 
+    // If lead source is a segment, tag the leads as queued
+    if (campaign.lead_source && campaign.lead_source.startsWith("segment::")) {
+      const segmentEmails = eligibleLeads.map((l) => l.email);
+      if (segmentEmails.length > 0) {
+        await client.query(
+          `UPDATE lead_segments
+           SET outreach_status = 'queued', campaign_tag = $1
+           WHERE email = ANY($2) AND outreach_status = 'new'`,
+          [campaignId, segmentEmails]
+        );
+      }
+    }
+
     await client.query("COMMIT");
 
     await logOperation({
@@ -274,6 +289,7 @@ export async function activateCampaign(
         actorUserId: actorUserId ?? null,
         queuedLeads: eligibleLeads.length,
         queuedEmails: totalQueued,
+        leadSource: campaign.lead_source,
       },
     });
 
