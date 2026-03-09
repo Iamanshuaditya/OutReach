@@ -143,9 +143,9 @@ export default function OutreachDashboard() {
                 body: JSON.stringify({
                     domain: newDomain.trim(),
                     provider: newProvider,
-                    ...(['smtp', 'hostinger', 'godaddy', 'other'].includes(newProvider) && smtpHost ? {
-                        smtp_host: smtpHost || (newProvider === 'hostinger' ? 'smtp.hostinger.com' : ''),
-                        smtp_port: parseInt(smtpPort) || (newProvider === 'hostinger' || newProvider === 'godaddy' ? 465 : 587),
+                    ...(smtpHost || smtpUser ? {
+                        smtp_host: smtpHost || { google: 'smtp.gmail.com', microsoft: 'smtp.office365.com', zoho: 'smtp.zoho.com', hostinger: 'smtp.hostinger.com', godaddy: 'smtpout.secureserver.net' }[newProvider] || '',
+                        smtp_port: parseInt(smtpPort) || { google: 587, microsoft: 587, zoho: 465, hostinger: 465, godaddy: 465 }[newProvider] || 587,
                         smtp_user: smtpUser, smtp_pass: smtpPass,
                     } : {}),
                 }),
@@ -165,8 +165,15 @@ export default function OutreachDashboard() {
     // --- Delete Domain ---
     const handleDeleteDomain = async (id: string) => {
         if (!confirm('Remove this domain and all its inboxes?')) return;
-        await fetch(`/api/outreach/domains?id=${id}`, { method: 'DELETE' });
-        fetchData();
+        try {
+            const res = await fetch(`/api/outreach/domains?id=${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert((err as { error?: string }).error || 'Failed to delete domain');
+                return;
+            }
+            fetchData();
+        } catch { alert('Network error deleting domain'); }
     };
 
     // --- Add Inbox ---
@@ -212,15 +219,29 @@ export default function OutreachDashboard() {
     // --- Delete Inbox ---
     const handleDeleteInbox = async (id: string) => {
         if (!confirm('Remove this inbox?')) return;
-        await fetch(`/api/outreach/inboxes?id=${id}`, { method: 'DELETE' });
-        fetchData();
+        try {
+            const res = await fetch(`/api/outreach/inboxes?id=${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert((err as { error?: string }).error || 'Failed to delete inbox');
+                return;
+            }
+            fetchData();
+        } catch { alert('Network error deleting inbox'); }
     };
 
     // --- Delete Campaign ---
     const handleDeleteCampaign = async (id: string) => {
         if (!confirm('Delete this campaign?')) return;
-        await fetch(`/api/outreach/campaigns?id=${id}`, { method: 'DELETE' });
-        fetchData();
+        try {
+            const res = await fetch(`/api/outreach/campaigns?id=${id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert((err as { error?: string }).error || 'Failed to delete campaign');
+                return;
+            }
+            fetchData();
+        } catch { alert('Network error deleting campaign'); }
     };
 
     // --- Re-check DNS ---
@@ -834,26 +855,42 @@ export default function OutreachDashboard() {
                                 </div>
                             </div>
 
-                            {/* SMTP fields — show for smtp, godaddy, hostinger, other */}
-                            {['smtp', 'godaddy', 'hostinger', 'other'].includes(newProvider) && (
-                                <div className="space-y-3 bg-white/[0.02] border border-white/[0.04] rounded-xl p-4">
-                                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-                                        SMTP Settings {!['smtp', 'hostinger'].includes(newProvider) && <span className="normal-case font-normal">(optional — fill in if you want to send emails)</span>}
-                                    </div>
-                                    {newProvider === 'hostinger' && (
-                                        <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-2.5 text-[11px] text-indigo-400 flex items-start gap-2 mb-1">
-                                            <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                                            <div>Hostinger SMTP is pre-filled. Use your Hostinger email address as the username and your email password.</div>
-                                        </div>
-                                    )}
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <Input placeholder={newProvider === 'godaddy' ? 'smtpout.secureserver.net' : newProvider === 'hostinger' ? 'smtp.hostinger.com' : 'smtp.yourdomain.com'} value={smtpHost} onChange={e => setSmtpHost(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
-                                        <Input placeholder={newProvider === 'godaddy' ? '465' : newProvider === 'hostinger' ? '465' : '587'} value={smtpPort} onChange={e => setSmtpPort(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
-                                    </div>
-                                    <Input placeholder={newProvider === 'hostinger' ? 'your@email.com (Hostinger email)' : 'SMTP Username (usually your email)'} value={smtpUser} onChange={e => setSmtpUser(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
-                                    <Input placeholder={newProvider === 'hostinger' ? 'Email password' : 'SMTP Password / App Password'} type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                            {/* SMTP fields — required for all providers to send emails */}
+                            <div className="space-y-3 bg-white/[0.02] border border-white/[0.04] rounded-xl p-4">
+                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                    SMTP Settings <span className="normal-case font-normal">(required to send emails)</span>
                                 </div>
-                            )}
+                                {newProvider === 'google' && (
+                                    <div className="bg-blue-500/5 border border-blue-500/10 rounded-lg p-2.5 text-[11px] text-blue-400 flex items-start gap-2 mb-1">
+                                        <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                        <div>Use <strong>smtp.gmail.com</strong> with port <strong>587</strong>. Create an <strong>App Password</strong> in your Google Account → Security → 2-Step Verification → App Passwords.</div>
+                                    </div>
+                                )}
+                                {newProvider === 'microsoft' && (
+                                    <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-2.5 text-[11px] text-cyan-400 flex items-start gap-2 mb-1">
+                                        <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                        <div>Use <strong>smtp.office365.com</strong> with port <strong>587</strong>. Use your Microsoft 365 email and password (or app password if MFA is enabled).</div>
+                                    </div>
+                                )}
+                                {newProvider === 'zoho' && (
+                                    <div className="bg-yellow-500/5 border border-yellow-500/10 rounded-lg p-2.5 text-[11px] text-yellow-400 flex items-start gap-2 mb-1">
+                                        <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                        <div>Use <strong>smtp.zoho.com</strong> with port <strong>465</strong>. Generate an App Password in Zoho Mail → Settings → Security → App Passwords.</div>
+                                    </div>
+                                )}
+                                {newProvider === 'hostinger' && (
+                                    <div className="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-2.5 text-[11px] text-indigo-400 flex items-start gap-2 mb-1">
+                                        <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                        <div>Hostinger SMTP is pre-filled. Use your Hostinger email address as the username and your email password.</div>
+                                    </div>
+                                )}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Input placeholder={{ google: 'smtp.gmail.com', microsoft: 'smtp.office365.com', zoho: 'smtp.zoho.com', hostinger: 'smtp.hostinger.com', godaddy: 'smtpout.secureserver.net' }[newProvider] || 'smtp.yourdomain.com'} value={smtpHost} onChange={e => setSmtpHost(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                    <Input placeholder={{ google: '587', microsoft: '587', zoho: '465', hostinger: '465', godaddy: '465' }[newProvider] || '587'} value={smtpPort} onChange={e => setSmtpPort(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                </div>
+                                <Input placeholder={newProvider === 'google' ? 'your@gmail.com or workspace email' : newProvider === 'microsoft' ? 'your@outlook.com or work email' : 'SMTP Username (usually your email)'} value={smtpUser} onChange={e => setSmtpUser(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                                <Input placeholder={newProvider === 'google' ? 'Google App Password (16 chars)' : newProvider === 'microsoft' ? 'Microsoft password or app password' : 'SMTP Password / App Password'} type="password" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} className="h-8 text-xs bg-white/[0.02]" />
+                            </div>
 
                             <div className="bg-blue-500/5 border border-blue-500/10 rounded-lg p-3 text-xs text-blue-400 flex items-start gap-2">
                                 <Shield className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />

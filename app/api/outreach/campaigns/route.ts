@@ -423,11 +423,39 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await pool.query(
-      `DELETE FROM outreach_campaigns
-       WHERE id = $1 AND org_id = $2`,
-      [id, auth.context.orgId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Clean up all references before deleting campaign
+      await client.query(
+        `DELETE FROM outreach_email_events WHERE campaign_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_operation_logs WHERE campaign_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_send_queue WHERE campaign_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_lead_states WHERE campaign_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_campaigns WHERE id = $1 AND org_id = $2`,
+        [id, auth.context.orgId]
+      );
+
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return NextResponse.json(
       { success: true },

@@ -31,6 +31,9 @@ type QueueContextRow = {
   campaign_id: string;
   campaign_status: string;
   sender_name: string;
+  sender_company: string;
+  product_description: string;
+  value_proposition: string;
   inbox_id: string;
   inbox_email: string;
   inbox_display_name: string;
@@ -79,6 +82,73 @@ function decodeSecret(value: string | null): string | null {
   }
 
   return value;
+}
+
+async function generateFallbackEmail(
+  lead: { firstName: string; lastName: string; company: string; email: string; raw: Record<string, unknown> },
+  sender: { name: string; company: string; product_description: string; value_proposition: string },
+  stepNumber: number,
+): Promise<{ subject: string; body: string }> {
+  const firstName = lead.firstName || "there";
+  const company = lead.company || "your company";
+  const title = (lead.raw?.title as string) || "";
+  const industry = (lead.raw?.industry as string) || "";
+
+  // Try Groq AI first
+  if (env.GROQ_API_KEY) {
+    try {
+      const systemPrompt = `You are an expert cold email writer for B2B outbound sales. Write hyper-personalized, non-spammy emails that feel human.
+RULES: Keep under 120 words. No spammy language. Soft CTA. Sound like a real person.
+Tone: direct. Step: ${stepNumber}.
+Respond ONLY with JSON: {"subject": "...", "body": "..."}`;
+
+      const userPrompt = `Write step ${stepNumber} cold email.
+RECIPIENT: ${lead.firstName} ${lead.lastName}, ${title || "exec"} at ${company}${industry ? ` (${industry})` : ""}.
+SENDER: ${sender.name} from ${sender.company}. ${sender.product_description}. Value: ${sender.value_proposition}.`;
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.9,
+          max_tokens: 600,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content ?? "";
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.subject && parsed.body) return parsed;
+        }
+      }
+    } catch (err) {
+      console.error("AI generation failed at send time, using fallback:", err);
+    }
+  }
+
+  // Fallback template
+  if (stepNumber <= 1) {
+    return {
+      subject: `Quick thought on ${company}`,
+      body: `Hi ${firstName},\n\nI noticed you're${title ? ` ${title}` : ""} at ${company}.${industry ? ` In the ${industry} space,` : ""} I've been seeing teams struggle with building products that actually ship on time.\n\n${sender.company} helps companies go from MVP to funded — we build, launch, and iterate fast so founders can focus on growth.\n\nWould it make sense to chat for 10 min this week?\n\n${sender.name}`,
+    };
+  }
+
+  return {
+    subject: `Re: Quick thought on ${company}`,
+    body: `Hi ${firstName},\n\nJust wanted to follow up on my last note. I know things get busy.\n\nWe've been helping companies like yours ship MVPs in weeks, not months — and use that momentum to raise funding.\n\nWorth a quick chat?\n\n${sender.name}`,
+  };
 }
 
 function shouldRetry(errorClass: SMTPErrorClass | undefined): boolean {
@@ -141,6 +211,9 @@ async function loadQueueContext(
        c.id AS campaign_id,
        c.status AS campaign_status,
        c.sender_name,
+       c.sender_company,
+       c.product_description,
+       c.value_proposition,
        i.id AS inbox_id,
        i.email AS inbox_email,
        i.display_name AS inbox_display_name,
@@ -526,12 +599,37 @@ export async function processQueueBatch(batchSize = 25): Promise<QueueRunResult>
       const leadLastName = getLeadValue(leadPayload, "last_name");
       const leadCompany = getLeadValue(leadPayload, "company");
 
+      // Generate AI content if subject/body are empty
+      let emailSubject = item.subject;
+      let emailBody = item.body;
+
+      if (!emailSubject.trim() && !emailBody.trim()) {
+        const generated = await generateFallbackEmail(
+          {
+            firstName: leadFirstName,
+            lastName: leadLastName,
+            company: leadCompany,
+            email: item.recipient_email,
+            raw: leadPayload.raw as Record<string, unknown> ?? leadPayload,
+          },
+          {
+            name: context.sender_name || "",
+            company: context.sender_company || "",
+            product_description: context.product_description || "",
+            value_proposition: context.value_proposition || "",
+          },
+          item.step_number,
+        );
+        emailSubject = generated.subject;
+        emailBody = generated.body;
+      }
+
       const composed = composeEmail({
         queueItemId: item.id,
         trackingId,
         campaignId: item.campaign_id,
-        subjectTemplate: item.subject,
-        bodyTemplate: item.body,
+        subjectTemplate: emailSubject,
+        bodyTemplate: emailBody,
         lead: {
           first_name: leadFirstName,
           last_name: leadLastName,

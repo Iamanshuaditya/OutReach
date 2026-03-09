@@ -209,6 +209,10 @@ export default function CampaignDetailPage({
     // Pause/Resume
     const [togglingStatus, setTogglingStatus] = useState(false);
 
+    // Manual queue trigger
+    const [processingQueue, setProcessingQueue] = useState(false);
+    const [queueResult, setQueueResult] = useState<{ ok: boolean; message: string } | null>(null);
+
     // Expandable metadata in activity log
     const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
 
@@ -274,12 +278,45 @@ export default function CampaignDetailPage({
                 body: JSON.stringify({ status: newStatus }),
             });
             if (res.ok) {
-                setData((prev) =>
-                    prev ? { ...prev, campaign: { ...prev.campaign, status: newStatus } } : prev
-                );
+                // Full refresh to get new queue items after activation
+                await fetchCampaign();
+            } else {
+                const err = await res.json().catch(() => ({}));
+                alert((err as { error?: string }).error || "Failed to update campaign status");
             }
         } finally {
             setTogglingStatus(false);
+        }
+    }
+
+    async function triggerQueueProcessing() {
+        setProcessingQueue(true);
+        setQueueResult(null);
+        try {
+            const res = await fetch(`/api/outreach/process-queue?batch=100&force=1&campaign=${id}`, { method: "POST" });
+            const json = await res.json();
+            if (res.ok && json.ok) {
+                const sent = json.result?.sent ?? 0;
+                const failed = json.result?.failed ?? 0;
+                const skipped = json.result?.skipped ?? 0;
+                setQueueResult({
+                    ok: true,
+                    message: `Processed: ${sent} sent, ${failed} failed, ${skipped} skipped`,
+                });
+                // Refresh campaign data to reflect changes
+                fetchCampaign();
+            } else {
+                setQueueResult({
+                    ok: false,
+                    message: json.error || "Failed to process queue",
+                });
+            }
+        } catch {
+            setQueueResult({ ok: false, message: "Network error" });
+        } finally {
+            setProcessingQueue(false);
+            // Clear result after 5s
+            setTimeout(() => setQueueResult(null), 5000);
         }
     }
 
@@ -396,27 +433,43 @@ export default function CampaignDetailPage({
                         </p>
                     </div>
 
-                    {(campaign.status === "active" || campaign.status === "paused") && (
-                        <Button
-                            onClick={toggleStatus}
-                            disabled={togglingStatus}
-                            variant="outline"
-                            className={`border-zinc-800 ${
-                                campaign.status === "active"
-                                    ? "text-orange-400 hover:text-orange-300 hover:border-orange-800"
-                                    : "text-emerald-400 hover:text-emerald-300 hover:border-emerald-800"
-                            }`}
-                        >
-                            {togglingStatus ? (
-                                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                            ) : campaign.status === "active" ? (
-                                <Pause className="w-4 h-4 mr-2" />
-                            ) : (
-                                <Play className="w-4 h-4 mr-2" />
-                            )}
-                            {campaign.status === "active" ? "Pause" : "Resume"}
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {(campaign.status === "scheduled" || campaign.status === "draft") && (
+                            <Button
+                                onClick={toggleStatus}
+                                disabled={togglingStatus}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                            >
+                                {togglingStatus ? (
+                                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                                ) : (
+                                    <Send className="w-4 h-4 mr-2" />
+                                )}
+                                {togglingStatus ? "Launching..." : "Launch Campaign"}
+                            </Button>
+                        )}
+                        {(campaign.status === "active" || campaign.status === "paused") && (
+                            <Button
+                                onClick={toggleStatus}
+                                disabled={togglingStatus}
+                                variant="outline"
+                                className={`border-zinc-800 ${
+                                    campaign.status === "active"
+                                        ? "text-orange-400 hover:text-orange-300 hover:border-orange-800"
+                                        : "text-emerald-400 hover:text-emerald-300 hover:border-emerald-800"
+                                }`}
+                            >
+                                {togglingStatus ? (
+                                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                                ) : campaign.status === "active" ? (
+                                    <Pause className="w-4 h-4 mr-2" />
+                                ) : (
+                                    <Play className="w-4 h-4 mr-2" />
+                                )}
+                                {campaign.status === "active" ? "Pause" : "Resume"}
+                            </Button>
+                        )}
+                    </div>
                 </div>
 
                 <Separator className="bg-zinc-800/50" />
@@ -589,9 +642,34 @@ export default function CampaignDetailPage({
 
                 {/* ────── Send Queue ────── */}
                 <div className="border border-zinc-800/50 rounded-lg p-5 space-y-4">
-                    <h2 className="text-sm font-medium text-zinc-400 flex items-center gap-2">
-                        <Send className="w-4 h-4" /> Send Queue
-                    </h2>
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-sm font-medium text-zinc-400 flex items-center gap-2">
+                            <Send className="w-4 h-4" /> Send Queue
+                        </h2>
+                        <div className="flex items-center gap-3">
+                            {queueResult && (
+                                <span className={`text-xs ${queueResult.ok ? "text-emerald-400" : "text-red-400"}`}>
+                                    {queueResult.message}
+                                </span>
+                            )}
+                            {campaign.status === "active" && (
+                                <Button
+                                    onClick={triggerQueueProcessing}
+                                    disabled={processingQueue}
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-zinc-700 text-zinc-300 hover:text-white hover:border-zinc-500 h-7 text-xs"
+                                >
+                                    {processingQueue ? (
+                                        <Loader2 className="w-3 h-3 animate-spin mr-1.5" />
+                                    ) : (
+                                        <Send className="w-3 h-3 mr-1.5" />
+                                    )}
+                                    {processingQueue ? "Sending..." : "Send Now"}
+                                </Button>
+                            )}
+                        </div>
+                    </div>
 
                     {/* Summary bar */}
                     <div className="flex flex-wrap gap-3">

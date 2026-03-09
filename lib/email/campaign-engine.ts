@@ -1,7 +1,106 @@
 import pool from "@/lib/db";
+import { env } from "@/lib/env";
 import { buildSchedule } from "@/lib/email/scheduler";
 import { loadCampaignLeads, type CampaignLead } from "@/lib/email/lead-source";
 import { logOperation } from "@/lib/email/ops-logger";
+
+async function generateAIEmail(
+  lead: CampaignLead,
+  sender: { name: string; company: string; product_description: string; value_proposition: string },
+  tone: string,
+  stepNumber: number,
+): Promise<{ subject: string; body: string }> {
+  const firstName = lead.firstName || "there";
+  const raw = lead.raw || {};
+
+  // If Groq API key is available, use AI generation
+  if (env.GROQ_API_KEY) {
+    try {
+      const systemPrompt = `You are an expert cold email writer for B2B outbound sales. You write hyper-personalized, non-spammy emails that feel human.
+
+RULES:
+- Never use spammy language (free, limited time, act now, etc.)
+- Never include HTML or formatting
+- Keep emails under 120 words
+- Always include a personalized first line based on the lead's role/company
+- Use a soft CTA (question, not a demand)
+- Vary sentence length and structure
+- Sound like a real person, not a template
+- If this is a follow-up email (step > 1), reference the previous outreach naturally
+
+Tone: ${tone || "direct"}
+Step: ${stepNumber} of sequence
+
+Respond ONLY with valid JSON:
+{"subject": "Subject line", "body": "Full email body"}`;
+
+      const userPrompt = `Write a cold email for:
+
+RECIPIENT:
+Name: ${lead.firstName} ${lead.lastName}
+Title: ${raw.title || "Unknown"}
+Company: ${lead.company || "Unknown"}
+Industry: ${raw.industry || "Unknown"}
+
+SENDER:
+Name: ${sender.name || "Unknown"}
+Company: ${sender.company || "Unknown"}
+Product: ${sender.product_description || "Business solution"}
+Value Prop: ${sender.value_proposition || "Helping businesses grow"}
+
+Write step ${stepNumber} of the sequence.`;
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.9,
+          max_tokens: 800,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content ?? "";
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.subject && parsed.body) {
+            return { subject: parsed.subject, body: parsed.body };
+          }
+        }
+      }
+    } catch (err) {
+      console.error("AI generation failed, using fallback:", err);
+    }
+  }
+
+  // Fallback: generate a decent template-based email
+  const company = lead.company || "your company";
+  const title = (raw.title as string) || "leading the charge";
+  const industry = (raw.industry as string) || "";
+
+  if (stepNumber === 1) {
+    return {
+      subject: `Quick thought on ${company}`,
+      body: `Hi ${firstName},\n\nI noticed you're ${title} at ${company}.${industry ? ` In the ${industry} space,` : ""} I've been seeing teams struggle with building products that actually ship on time.\n\n${sender.company} helps companies go from MVP to funded — we build, launch, and iterate fast so founders can focus on growth.\n\nWould it make sense to chat for 10 min this week?\n\n${sender.name}`,
+    };
+  }
+
+  // Follow-up
+  return {
+    subject: `Re: Quick thought on ${company}`,
+    body: `Hi ${firstName},\n\nJust wanted to follow up on my last note. I know things get busy.\n\nWe've been helping companies like yours ship MVPs in weeks, not months — and use that momentum to raise funding.\n\nWorth a quick chat?\n\n${sender.name}`,
+  };
+}
 
 type CampaignStepRow = {
   id: string;
@@ -10,6 +109,8 @@ type CampaignStepRow = {
   subject_template: string;
   body_template: string;
   wait_days: number;
+  ai_personalize: boolean;
+  tone: string;
 };
 
 type CampaignRow = {
@@ -25,6 +126,10 @@ type CampaignRow = {
   min_interval_seconds: number;
   max_interval_seconds: number;
   randomize_interval: boolean;
+  sender_name: string;
+  sender_company: string;
+  product_description: string;
+  value_proposition: string;
 };
 
 function substituteTemplate(template: string, lead: CampaignLead): string {
@@ -197,7 +302,17 @@ export async function activateCampaign(
     );
 
     if (Number(pendingQueueResult.rows[0]?.count ?? 0) > 0) {
-      throw new Error("Campaign already has queued/pending send items");
+      // Clear stale queue items from previous failed activation attempts
+      await client.query(
+        `DELETE FROM outreach_send_queue
+         WHERE campaign_id = $1 AND org_id = $2 AND status IN ('pending', 'sending')`,
+        [campaignId, orgId]
+      );
+      await client.query(
+        `DELETE FROM outreach_lead_states
+         WHERE campaign_id = $1 AND org_id = $2 AND status = 'active'`,
+        [campaignId, orgId]
+      );
     }
 
     let totalQueued = 0;
@@ -216,8 +331,32 @@ export async function activateCampaign(
       );
 
       for (const emailStep of emailSteps) {
-        const subject = substituteTemplate(emailStep.step.subject_template, lead);
-        const body = substituteTemplate(emailStep.step.body_template, lead);
+        let subject: string;
+        let body: string;
+
+        const needsAI =
+          emailStep.step.ai_personalize &&
+          !emailStep.step.subject_template &&
+          !emailStep.step.body_template;
+
+        if (needsAI) {
+          const generated = await generateAIEmail(
+            lead,
+            {
+              name: campaign.sender_name,
+              company: campaign.sender_company,
+              product_description: campaign.product_description,
+              value_proposition: campaign.value_proposition,
+            },
+            emailStep.step.tone || "direct",
+            emailStep.step.step_number,
+          );
+          subject = generated.subject;
+          body = generated.body;
+        } else {
+          subject = substituteTemplate(emailStep.step.subject_template, lead);
+          body = substituteTemplate(emailStep.step.body_template, lead);
+        }
 
         await client.query(
           `INSERT INTO outreach_send_queue

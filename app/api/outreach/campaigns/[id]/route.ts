@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
+import { activateCampaign } from "@/lib/email/campaign-engine";
 import { requireOrgContext } from "@/lib/auth/multi-tenant";
 import {
   checkRateLimit,
@@ -204,9 +205,11 @@ export async function PUT(
 
     const currentStatus = existing.rows[0].status as string;
 
-    // Validate status transitions: only active↔paused
+    // Validate status transitions
     if (status !== undefined) {
       const validTransitions: Record<string, string[]> = {
+        draft: ["active"],
+        scheduled: ["active"],
         active: ["paused"],
         paused: ["active"],
       };
@@ -215,10 +218,35 @@ export async function PUT(
       if (!allowed || !allowed.includes(status)) {
         return NextResponse.json(
           {
-            error: `Cannot transition from '${currentStatus}' to '${status}'. Only active↔paused transitions are allowed.`,
+            error: `Cannot transition from '${currentStatus}' to '${status}'.`,
           },
           { status: 400, headers: rateLimitHeaders(apiRate) }
         );
+      }
+
+      // Activate campaign (populate queue) when launching from draft/scheduled
+      const needsActivation =
+        (currentStatus === "draft" || currentStatus === "scheduled") && status === "active";
+
+      if (needsActivation) {
+        try {
+          await activateCampaign(id, auth.context.orgId);
+          return NextResponse.json(
+            { campaign: { id, status: "active" } },
+            { headers: rateLimitHeaders(apiRate) }
+          );
+        } catch (activationError) {
+          console.error("Campaign activation failed:", activationError);
+          return NextResponse.json(
+            {
+              error:
+                activationError instanceof Error
+                  ? activationError.message
+                  : "Campaign activation failed",
+            },
+            { status: 500, headers: rateLimitHeaders(apiRate) }
+          );
+        }
       }
     }
 

@@ -279,10 +279,39 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await pool.query(
-      `DELETE FROM outreach_inboxes WHERE id = $1 AND org_id = $2`,
-      [id, auth.context.orgId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `DELETE FROM outreach_email_events WHERE inbox_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_operation_logs WHERE inbox_id = $1`,
+        [id]
+      );
+      await client.query(
+        `UPDATE outreach_send_queue SET status = 'cancelled', last_error = 'Inbox deleted'
+         WHERE inbox_id = $1 AND status IN ('pending', 'sending')`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_send_queue WHERE inbox_id = $1`,
+        [id]
+      );
+      await client.query(
+        `DELETE FROM outreach_inboxes WHERE id = $1 AND org_id = $2`,
+        [id, auth.context.orgId]
+      );
+
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return NextResponse.json(
       { success: true },

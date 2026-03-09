@@ -626,11 +626,54 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await pool.query(
-      `DELETE FROM outreach_domains
-       WHERE id = $1 AND org_id = $2`,
-      [id, auth.context.orgId]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Get inbox IDs for this domain
+      const inboxResult = await client.query(
+        `SELECT id FROM outreach_inboxes WHERE domain_id = $1 AND org_id = $2`,
+        [id, auth.context.orgId]
+      );
+      const inboxIds = inboxResult.rows.map((r: { id: string }) => r.id);
+
+      if (inboxIds.length > 0) {
+        // Clean up references that block cascade
+        await client.query(
+          `DELETE FROM outreach_email_events WHERE inbox_id = ANY($1)`,
+          [inboxIds]
+        );
+        await client.query(
+          `UPDATE outreach_send_queue SET status = 'cancelled', last_error = 'Domain deleted'
+           WHERE inbox_id = ANY($1) AND status IN ('pending', 'sending')`,
+          [inboxIds]
+        );
+        await client.query(
+          `DELETE FROM outreach_send_queue WHERE inbox_id = ANY($1)`,
+          [inboxIds]
+        );
+        await client.query(
+          `DELETE FROM outreach_operation_logs WHERE inbox_id = ANY($1)`,
+          [inboxIds]
+        );
+        await client.query(
+          `DELETE FROM outreach_inboxes WHERE domain_id = $1 AND org_id = $2`,
+          [id, auth.context.orgId]
+        );
+      }
+
+      await client.query(
+        `DELETE FROM outreach_domains WHERE id = $1 AND org_id = $2`,
+        [id, auth.context.orgId]
+      );
+
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
 
     return NextResponse.json(
       { success: true },
